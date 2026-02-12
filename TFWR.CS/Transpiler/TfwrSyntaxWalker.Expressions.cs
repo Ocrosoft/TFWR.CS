@@ -28,7 +28,7 @@ internal partial class TfwrSyntaxWalker
             ConditionalExpressionSyntax cond => TranspileConditional(cond),
             CastExpressionSyntax cast => TranspileCast(cast),
             ObjectCreationExpressionSyntax objCreate => TranspileObjectCreation(objCreate),
-            ImplicitObjectCreationExpressionSyntax => "{}",
+            ImplicitObjectCreationExpressionSyntax implicitObj => TranspileImplicitObjectCreation(implicitObj),
             ArrayCreationExpressionSyntax arrCreate => TranspileArrayCreation(arrCreate),
             ImplicitArrayCreationExpressionSyntax implArr => TranspileImplicitArrayCreation(implArr),
             InitializerExpressionSyntax init => TranspileInitializer(init),
@@ -112,9 +112,13 @@ internal partial class TfwrSyntaxWalker
         };
 
         // Null coalescing: a ?? b
-        // TFWR 不支持三元表达式，生成 (a if a is not None else b) 并添加警告
+        // 在表达式上下文中无法生成 if-else 语句，输出警告
         if (bin.IsKind(SyntaxKind.CoalesceExpression))
-            return $"({left} if {left} is not None else {right})  # WARNING: TFWR may not support ternary";
+        {
+            var lineNumber = bin.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            Console.WriteLine($"[警告] null coalescing 操作符 (??) 无法在表达式中转译，请改用 if-else 语句 at line {lineNumber}");
+            return $"/* UNSUPPORTED: {left} ?? {right} - use if-else statement */";
+        }
 
         return $"{left} {op} {right}";
     }
@@ -185,12 +189,14 @@ internal partial class TfwrSyntaxWalker
 
     private string TranspileConditional(ConditionalExpressionSyntax cond)
     {
+        var lineNumber = cond.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        Console.WriteLine($"[警告] 三元条件表达式 (? :) 不支持，请改用 if-else 语句 at line {lineNumber}");
+        
         var whenTrue = TranspileExpression(cond.WhenTrue);
         var whenFalse = TranspileExpression(cond.WhenFalse);
         var condition = TranspileExpression(cond.Condition);
-        // 注意：TFWR 不支持三元表达式，这里生成的代码可能无法运行
-        // 建议在 C# 中用 if-else 语句替代三元表达式
-        return $"({whenTrue} if {condition} else {whenFalse})# WARNING: TFWR may not support ternary";
+  
+        return $"/* UNSUPPORTED: {condition} ? {whenTrue} : {whenFalse} - use if-else statement */";
     }
 
     private string TranspileCast(CastExpressionSyntax cast)
@@ -228,8 +234,8 @@ internal partial class TfwrSyntaxWalker
         if (typeName == "Random")
             return "None";
 
-        // Tuple<T1, T2, ...> → (arg1, arg2, ...)
-        if (typeName.StartsWith("Tuple<") || typeName.StartsWith("ValueTuple<"))
+        // Tuple<T1, T2, ...> 或 KeyValuePair<K, V> → (arg1, arg2, ...)
+        if (typeName.StartsWith("Tuple<") || typeName.StartsWith("ValueTuple<") || typeName.StartsWith("KeyValuePair<"))
         {
             if (obj.ArgumentList != null && obj.ArgumentList.Arguments.Count > 0)
             {
@@ -239,9 +245,112 @@ internal partial class TfwrSyntaxWalker
             return "()";
         }
 
+        // 其他对象创建：保留类型名和参数（可能是自定义类）
         var args = obj.ArgumentList != null
-        ? string.Join(", ", obj.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression))) : "";
+          ? string.Join(", ", obj.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression))) : "";
         return $"{typeName}({args})";
+    }
+
+    /// <summary>
+    /// 处理隐式对象创建表达式 new(...)
+    /// </summary>
+    private string TranspileImplicitObjectCreation(ImplicitObjectCreationExpressionSyntax implicitObj)
+    {
+        // 尝试从父节点推断类型
+        var inferredType = InferTypeFromContext(implicitObj);
+
+        // 根据推断的类型决定输出
+        if (inferredType != null)
+        {
+            if (inferredType.StartsWith("List<") || inferredType == "List")
+            {
+                // List<T> → []
+                if (implicitObj.Initializer != null)
+                    return TranspileInitializer(implicitObj.Initializer);
+                return "[]";
+            }
+            else if (inferredType.StartsWith("Dictionary<") || inferredType.StartsWith("Dict"))
+            {
+                // Dictionary<K, V> → {}
+                if (implicitObj.Initializer != null)
+                    return TranspileInitializer(implicitObj.Initializer);
+                return "{}";
+            }
+            else if (inferredType.StartsWith("HashSet<"))
+            {
+                // HashSet<T> → set()
+                if (implicitObj.Initializer != null)
+                    return $"set({TranspileInitializer(implicitObj.Initializer)})";
+                return "set()";
+            }
+        }
+
+        // 对于其他类型（Tuple, KeyValuePair, 自定义类等）或无法推断的情况
+        // 转换为元组 (arg1, arg2, ...)
+        if (implicitObj.ArgumentList != null && implicitObj.ArgumentList.Arguments.Count > 0)
+        {
+            var args = string.Join(", ", implicitObj.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression)));
+            return $"({args})";
+        }
+
+        // 如果有初始化器，使用初始化器
+        if (implicitObj.Initializer != null)
+            return TranspileInitializer(implicitObj.Initializer);
+
+        // 默认：空元组
+        return "()";
+    }
+
+    /// <summary>
+    /// 从上下文推断隐式对象创建的类型
+    /// </summary>
+    private static string? InferTypeFromContext(ImplicitObjectCreationExpressionSyntax implicitObj)
+    {
+        var parent = implicitObj.Parent;
+
+        // 情况1: 变量声明初始化器 var x = new();
+        if (parent is EqualsValueClauseSyntax equalsValue &&
+            equalsValue.Parent is VariableDeclaratorSyntax declarator &&
+        declarator.Parent is VariableDeclarationSyntax declaration)
+        {
+            return declaration.Type.ToString();
+        }
+
+        // 情况2: 赋值表达式右侧 x = new();
+        if (parent is AssignmentExpressionSyntax assignment)
+        {
+            // 尝试从左侧推断类型（这需要符号信息，我们简化处理）
+            // 暂时无法准确推断
+            return null;
+        }
+
+        // 情况3: 方法参数 Method(new());
+        if (parent is ArgumentSyntax argument &&
+    argument.Parent is ArgumentListSyntax argList &&
+            argList.Parent is InvocationExpressionSyntax invocation)
+        {
+            // 需要方法签名信息，暂时无法准确推断
+            return null;
+        }
+
+        // 情况4: 集合初始化器 [new(), new()]
+        if (parent is ExpressionElementSyntax expressionElement &&
+                expressionElement.Parent is CollectionExpressionSyntax collectionExpr &&
+                collectionExpr.Parent is EqualsValueClauseSyntax equalsValue2 &&
+                equalsValue2.Parent is VariableDeclaratorSyntax declarator2 &&
+                declarator2.Parent is VariableDeclarationSyntax declaration2)
+        {
+            var collectionType = declaration2.Type.ToString();
+            // List<T> 或 T[] → 提取元素类型 T
+            if (collectionType.StartsWith("List<"))
+            {
+                var elementType = collectionType.Substring(5, collectionType.Length - 6);
+                return elementType;
+            }
+            return null;
+        }
+
+        return null;
     }
 
     private string TranspileArrayCreation(ArrayCreationExpressionSyntax arr)
@@ -278,11 +387,11 @@ internal partial class TfwrSyntaxWalker
             if (typeName.StartsWith("Dictionary<") || typeName.StartsWith("Dict"))
             {
                 var entries = init.Expressions.Select(e =>
-                {
-                    if (e is InitializerExpressionSyntax sub && sub.Expressions.Count == 2)
-                        return $"{TranspileExpression(sub.Expressions[0])}: {TranspileExpression(sub.Expressions[1])}";
-                    return TranspileExpression(e);
-                });
+                       {
+                           if (e is InitializerExpressionSyntax sub && sub.Expressions.Count == 2)
+                               return $"{TranspileExpression(sub.Expressions[0])}: {TranspileExpression(sub.Expressions[1])}";
+                           return TranspileExpression(e);
+                       });
                 return $"{{{string.Join(", ", entries)}}}";
             }
         }
@@ -293,22 +402,22 @@ internal partial class TfwrSyntaxWalker
     private string TranspileCollectionExpression(CollectionExpressionSyntax coll)
     {
         var items = coll.Elements.Select(e =>
-              {
-                  if (e is ExpressionElementSyntax exprElem)
-                      return TranspileExpression(exprElem.Expression);
-                  return e.ToString();
-              });
+    {
+        if (e is ExpressionElementSyntax exprElem)
+            return TranspileExpression(exprElem.Expression);
+        return e.ToString();
+    });
         return $"[{string.Join(", ", items)}]";
     }
 
     private string TranspileInterpolatedString(InterpolatedStringExpressionSyntax interp)
     {
         var parts = interp.Contents.Select(c => c switch
-        {
-            InterpolatedStringTextSyntax text => text.TextToken.Text,
-            InterpolationSyntax hole => $"\" + str({TranspileExpression(hole.Expression)}) + \"",
-            _ => c.ToString()
-        });
+   {
+       InterpolatedStringTextSyntax text => text.TextToken.Text,
+       InterpolationSyntax hole => $"\" + str({TranspileExpression(hole.Expression)}) + \"",
+       _ => c.ToString()
+   });
         return $"\"{string.Join("", parts)}\"";
     }
 
@@ -338,10 +447,10 @@ internal partial class TfwrSyntaxWalker
         return isPat.Pattern switch
         {
             ConstantPatternSyntax cp when cp.Expression.IsKind(SyntaxKind.NullLiteralExpression)
-            => $"{expr} is None",
+     => $"{expr} is None",
             UnaryPatternSyntax { OperatorToken.Text: "not", Pattern: ConstantPatternSyntax { Expression: var e } }
-            when e.IsKind(SyntaxKind.NullLiteralExpression)
-            => $"{expr} is not None",
+          when e.IsKind(SyntaxKind.NullLiteralExpression)
+         => $"{expr} is not None",
             _ => $"# is pattern: {isPat}"
         };
     }

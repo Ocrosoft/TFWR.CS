@@ -105,42 +105,283 @@ internal partial class TfwrSyntaxWalker
         if (IsListMethod(method, ma, args, inv, out var listResult))
             return listResult;
 
-        // dict.ContainsKey(k) → k in dict
-        if (method == "ContainsKey" && inv.ArgumentList.Arguments.Count == 1)
-            return $"{args} in {TranspileExpression(ma.Expression)}";
+        // Dictionary 方法
+        if (IsDictionaryMethod(method, ma, args, inv, out var dictResult))
+            return dictResult;
 
         // Random.Next() 等 → random()
         if (obj == "Random" || method == "Next" || method == "NextDouble")
             return $"random()";
 
         // 其他：保持 obj.method() 形式
+        Console.WriteLine($"[警告] 未知的方法调用，可能无法正常运行: {obj}.{method}() at line {inv.GetLocation().GetLineSpan().StartLinePosition.Line + 1}");
         return $"{TranspileExpression(ma.Expression)}.{ToSnakeCase(method)}({args})";
     }
 
     private bool IsListMethod(string method, MemberAccessExpressionSyntax ma, string args, InvocationExpressionSyntax inv, out string result)
     {
         result = string.Empty;
+        var listExpr = TranspileExpression(ma.Expression);
 
         switch (method)
         {
             case "Add":
-                result = $"{TranspileExpression(ma.Expression)}.append({args})";
+                result = $"{listExpr}.append({args})";
                 return true;
 
             case "Remove":
-                result = $"{TranspileExpression(ma.Expression)}.remove({args})";
+                result = $"{listExpr}.remove({args})";
                 return true;
 
             case "Contains" when inv.ArgumentList.Arguments.Count == 1:
-                result = $"{args} in {TranspileExpression(ma.Expression)}";
+                result = $"{args} in {listExpr}";
                 return true;
 
             case "Insert":
-                result = $"{TranspileExpression(ma.Expression)}.insert({args})";
+                result = $"{listExpr}.insert({args})";
                 return true;
 
             case "Clear" when inv.ArgumentList.Arguments.Count == 0:
-                result = $"{TranspileExpression(ma.Expression)} = []";
+                result = $"{listExpr} = []";
+                return true;
+
+            case "First" when inv.ArgumentList.Arguments.Count == 0:
+                result = $"{listExpr}[0]";
+                return true;
+
+            case "Last" when inv.ArgumentList.Arguments.Count == 0:
+                result = $"{listExpr}[-1]";
+                return true;
+
+            case "FirstOrDefault" when inv.ArgumentList.Arguments.Count == 0:
+                WarnUnsupportedMethod(method, "use if-else instead)", inv);
+                result = $"# UNSUPPORTED: {listExpr}.FirstOrDefault() - use if len({listExpr}) > 0: x = {listExpr}[0]";
+                return true;
+
+            case "LastOrDefault" when inv.ArgumentList.Arguments.Count == 0:
+                WarnUnsupportedMethod(method, "use if-else instead)", inv);
+                result = $"# UNSUPPORTED: {listExpr}.LastOrDefault() - use if len({listExpr}) > 0: x = {listExpr}[-1]";
+                return true;
+
+            case "Any" when inv.ArgumentList.Arguments.Count == 0:
+                result = $"(len({listExpr}) > 0)";
+                return true;
+
+            case "ElementAt" when inv.ArgumentList.Arguments.Count == 1:
+                result = $"{listExpr}[{args}]";
+                return true;
+
+            case "ElementAtOrDefault" when inv.ArgumentList.Arguments.Count == 1:
+                WarnUnsupportedMethod(method, "List.ElementAtOrDefault (use if-else or try-except instead)", inv);
+                result = $"# UNSUPPORTED: {listExpr}.ElementAtOrDefault({args}) - use if {args} < len({listExpr}): x = {listExpr}[{args}]";
+                return true;
+
+            case "IndexOf" when inv.ArgumentList.Arguments.Count == 1:
+                WarnUnsupportedMethod(method, "List.Sort", inv);
+                result = $"# UNSUPPORTED: {listExpr}.index({args})";
+                return true;
+
+            case "RemoveAt" when inv.ArgumentList.Arguments.Count == 1:
+                result = $"{listExpr}.pop({args})";
+                return true;
+
+            case "Sort":
+                WarnUnsupportedMethod(method, "List.Sort", inv);
+                result = $"# UNSUPPORTED: {listExpr}.sort()";
+                return true;
+
+            case "Reverse":
+                WarnUnsupportedMethod(method, "List.Reverse", inv);
+                result = $"# UNSUPPORTED: {listExpr}.reverse()";
+                return true;
+
+            case "OrderBy":
+            case "OrderByDescending":
+            case "ThenBy":
+            case "ThenByDescending":
+                WarnUnsupportedMethod(method, "LINQ ordering", inv);
+                result = $"# UNSUPPORTED: {listExpr} LINQ ordering";
+                return true;
+
+            case "Where":
+            case "Select":
+            case "SelectMany":
+                WarnUnsupportedMethod(method, "LINQ query", inv);
+                result = $"# UNSUPPORTED: {listExpr} LINQ query";
+                return true;
+
+            case "GroupBy":
+            case "Join":
+            case "GroupJoin":
+                WarnUnsupportedMethod(method, "LINQ grouping/joining", inv);
+                result = $"# UNSUPPORTED: {listExpr} LINQ grouping";
+                return true;
+
+            case "All":
+            case "Count" when inv.ArgumentList.Arguments.Count > 0:
+            case "Any" when inv.ArgumentList.Arguments.Count > 0:
+                WarnUnsupportedMethod(method, "LINQ with predicate", inv);
+                result = $"# UNSUPPORTED: {listExpr}.{ToSnakeCase(method)}() with predicate";
+                return true;
+
+            case "Skip":
+            case "Take":
+            case "SkipWhile":
+            case "TakeWhile":
+                WarnUnsupportedMethod(method, "LINQ pagination", inv);
+                result = $"# UNSUPPORTED: {listExpr} LINQ pagination";
+                return true;
+
+            case "Distinct":
+            case "Union":
+            case "Intersect":
+            case "Except":
+                WarnUnsupportedMethod(method, "LINQ set operations", inv);
+                result = $"# UNSUPPORTED: {listExpr} LINQ set operations";
+                return true;
+
+            case "Concat":
+            case "Zip":
+                WarnUnsupportedMethod(method, "LINQ combining", inv);
+                result = $"# UNSUPPORTED: {listExpr} LINQ combining";
+                return true;
+
+            case "Aggregate":
+            case "Sum":
+            case "Average":
+            case "Min":
+            case "Max":
+                WarnUnsupportedMethod(method, "LINQ aggregation", inv);
+                result = $"# UNSUPPORTED: {listExpr} LINQ aggregation";
+                return true;
+
+            case "ToList":
+            case "ToArray":
+            case "ToDictionary":
+            case "ToHashSet":
+                WarnUnsupportedMethod(method, "LINQ conversion", inv);
+                result = $"# UNSUPPORTED: {listExpr} LINQ conversion";
+                return true;
+
+            case "ForEach":
+                WarnUnsupportedMethod(method, "List.ForEach", inv);
+                result = $"# UNSUPPORTED: Use for loop instead of {listExpr}.ForEach()";
+                return true;
+
+            case "Find":
+            case "FindAll":
+            case "FindIndex":
+            case "FindLast":
+            case "FindLastIndex":
+                WarnUnsupportedMethod(method, "List.Find methods", inv);
+                result = $"# UNSUPPORTED: {listExpr}.{ToSnakeCase(method)}()";
+                return true;
+
+            case "Exists":
+            case "TrueForAll":
+                WarnUnsupportedMethod(method, "List predicate methods", inv);
+                result = $"# UNSUPPORTED: {listExpr}.{ToSnakeCase(method)}()";
+                return true;
+
+            case "ConvertAll":
+                WarnUnsupportedMethod(method, "List.ConvertAll", inv);
+                result = $"# UNSUPPORTED: {listExpr}.convert_all()";
+                return true;
+
+            case "AddRange":
+            case "InsertRange":
+            case "RemoveRange":
+            case "RemoveAll":
+                WarnUnsupportedMethod(method, "List range methods", inv);
+                result = $"# UNSUPPORTED: {listExpr}.{ToSnakeCase(method)}()";
+                return true;
+
+            case "BinarySearch":
+            case "CopyTo":
+            case "GetRange":
+            case "AsReadOnly":
+                WarnUnsupportedMethod(method, $"List.{method}", inv);
+                result = $"# UNSUPPORTED: {listExpr}.{ToSnakeCase(method)}()";
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// 输出不支持方法的警告信息
+    /// </summary>
+    private static void WarnUnsupportedMethod(string method, string description, InvocationExpressionSyntax inv)
+    {
+        var lineNumber = inv.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        Console.WriteLine($"[警告] 不支持的方法: {method} ({description}) at line {lineNumber}");
+    }
+
+    private bool IsDictionaryMethod(string method, MemberAccessExpressionSyntax ma, string args, InvocationExpressionSyntax inv, out string result)
+    {
+        result = string.Empty;
+        var dictExpr = TranspileExpression(ma.Expression);
+
+        switch (method)
+        {
+            // ====== 支持的方法 ======
+
+            case "ContainsKey" when inv.ArgumentList.Arguments.Count == 1:
+                result = $"{args} in {dictExpr}";
+                return true;
+
+            case "ContainsValue" when inv.ArgumentList.Arguments.Count == 1:
+                result = $"{args} in {dictExpr}.values()";
+                return true;
+
+            case "TryGetValue" when inv.ArgumentList.Arguments.Count == 2:
+                // dict.TryGetValue(key, out value) → Python 中需要转换
+                WarnUnsupportedMethod(method, "Dictionary.TryGetValue (use dict.get() instead)", inv);
+                result = $"# UNSUPPORTED: Use {dictExpr}.get({args.Split(',')[0].Trim()}, None) instead";
+                return true;
+
+            case "Add" when inv.ArgumentList.Arguments.Count == 2:
+                var keyValue = args.Split([", "], StringSplitOptions.None);
+                if (keyValue.Length == 2)
+                {
+                    result = $"{dictExpr}[{keyValue[0]}] = {keyValue[1]}";
+                    return true;
+                }
+                return false;
+
+            case "Remove" when inv.ArgumentList.Arguments.Count == 1:
+                result = $"del {dictExpr}[{args}]";
+                return true;
+
+            case "Clear" when inv.ArgumentList.Arguments.Count == 0:
+                result = $"{dictExpr} = {{}}";
+                return true;
+
+            case "Keys" when inv.ArgumentList.Arguments.Count == 0:
+                result = $"list({dictExpr}.keys())";
+                return true;
+
+            case "Values" when inv.ArgumentList.Arguments.Count == 0:
+                result = $"list({dictExpr}.values())";
+                return true;
+
+            // ====== 不支持的方法（输出警告） ======
+
+            case "TryAdd":
+                WarnUnsupportedMethod(method, "Dictionary.TryAdd", inv);
+                result = $"# UNSUPPORTED: {dictExpr}.try_add()";
+                return true;
+
+            case "GetValueOrDefault":
+                WarnUnsupportedMethod(method, "Dictionary.GetValueOrDefault (use dict.get() instead)", inv);
+                result = $"# UNSUPPORTED: Use {dictExpr}.get({args}, None) instead";
+                return true;
+
+            case "EnsureCapacity":
+            case "TrimExcess":
+                WarnUnsupportedMethod(method, $"Dictionary.{method}", inv);
+                result = $"# UNSUPPORTED: {dictExpr}.{ToSnakeCase(method)}()";
                 return true;
 
             default:

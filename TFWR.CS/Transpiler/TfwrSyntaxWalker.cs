@@ -175,7 +175,55 @@ internal partial class TfwrSyntaxWalker(PythonCodeBuilder builder, bool isEntryF
         }
         else if (node.ExpressionBody != null)
         {
-            builder.AppendLine($"return {TranspileExpression(node.ExpressionBody.Expression)}");
+            var expr = node.ExpressionBody.Expression;
+            var isVoidReturn = node.ReturnType.ToString() == "void";
+
+            // 检查是否是递增/递减表达式
+            if (expr is PostfixUnaryExpressionSyntax postfix && postfix.OperatorToken.Text is "++" or "--")
+            {
+                var operand = TranspileExpression(postfix.Operand);
+                var op = postfix.OperatorToken.Text == "++" ? "+=" : "-=";
+
+                if (isVoidReturn)
+                {
+                    // void 方法：只执行副作用
+                    builder.AppendLine($"{operand} {op} 1");
+                }
+                else
+                {
+                    // 非 void 方法：先保存原值，再递增，最后返回原值
+                    builder.AppendLine($"_temp = {operand}");
+                    builder.AppendLine($"{operand} {op} 1");
+                    builder.AppendLine("return _temp");
+                }
+            }
+            else if (expr is PrefixUnaryExpressionSyntax prefix && prefix.OperatorToken.Text is "++" or "--")
+            {
+                var operand = TranspileExpression(prefix.Operand);
+                var op = prefix.OperatorToken.Text == "++" ? "+=" : "-=";
+
+                if (isVoidReturn)
+                {
+                    // void 方法：只执行副作用
+                    builder.AppendLine($"{operand} {op} 1");
+                }
+                else
+                {
+                    // 非 void 方法：先递增，再返回新值
+                    builder.AppendLine($"{operand} {op} 1");
+                    builder.AppendLine($"return {operand}");
+                }
+            }
+            else if (isVoidReturn && IsStatementExpression(expr))
+            {
+                // void 方法的其他副作用表达式（赋值、方法调用等）
+                builder.AppendLine(TranspileExpression(expr));
+            }
+            else
+            {
+                // 其他情况：正常返回表达式值
+                builder.AppendLine($"return {TranspileExpression(expr)}");
+            }
         }
         else
         {
@@ -316,5 +364,16 @@ internal partial class TfwrSyntaxWalker(PythonCodeBuilder builder, bool isEntryF
         if (!node.Modifiers.Any(SyntaxKind.StaticKeyword)) return false;
         if (node.Parent is not ClassDeclarationSyntax) return false;
         return true;
+    }
+
+    /// <summary>
+    /// 判断表达式是否是语句表达式（有副作用但不需要返回值）
+    /// </summary>
+    private static bool IsStatementExpression(ExpressionSyntax expr)
+    {
+        return expr is PostfixUnaryExpressionSyntax { OperatorToken.Text: "++" or "--" }
+                    or PrefixUnaryExpressionSyntax { OperatorToken.Text: "++" or "--" }
+                    or AssignmentExpressionSyntax
+                    or InvocationExpressionSyntax;
     }
 }
