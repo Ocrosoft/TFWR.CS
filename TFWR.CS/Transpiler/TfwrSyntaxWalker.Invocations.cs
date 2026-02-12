@@ -52,10 +52,6 @@ internal partial class TfwrSyntaxWalker
             return $"({args})";
         }
 
-        // TFWR.XXX → 游戏内置
-        if (obj == "TFWR" && NameMappings.TryGetBuiltinMethod(method, out var func))
-            return $"{func}({args})";
-
         // new Xxx().Method() → module.method()（跨文件）或 method()（同文件）
         if (ma.Expression is ObjectCreationExpressionSyntax objCreate)
         {
@@ -64,8 +60,12 @@ internal partial class TfwrSyntaxWalker
             if (IsKnownClassName(typeName) && !_localClassNames.Contains(typeName))
             {
                 RegisterCrossFileImportIfNeeded(typeName);
-                var moduleName = ToSnakeCase(typeName);
-                return $"{moduleName}.{ToSnakeCase(method)}({args})";
+                // 使用类所在的文件名作为模块名
+                if (classToFileMap.TryGetValue(typeName, out var fileName))
+                {
+                    var moduleName = ToSnakeCase(fileName);
+                    return $"{moduleName}.{ToSnakeCase(method)}({args})";
+                }
             }
             return $"{ToSnakeCase(method)}({args})";
         }
@@ -84,8 +84,14 @@ internal partial class TfwrSyntaxWalker
 
             // 跨文件的类 → module.method()
             RegisterCrossFileImportIfNeeded(className);
-            var moduleName = ToSnakeCase(className);
-            return $"{moduleName}.{ToSnakeCase(method)}({args})";
+            // 使用类所在的文件名作为模块名
+            if (classToFileMap.TryGetValue(className, out var fileName))
+            {
+                var moduleName = ToSnakeCase(fileName);
+                return $"{moduleName}.{ToSnakeCase(method)}({args})";
+            }
+            // 降级：如果找不到映射，使用类名
+            return $"{ToSnakeCase(className)}.{ToSnakeCase(method)}({args})";
         }
 
         // Math.Min / Math.Max / Math.Abs
@@ -104,6 +110,10 @@ internal partial class TfwrSyntaxWalker
         // List 方法
         if (IsListMethod(method, ma, args, inv, out var listResult))
             return listResult;
+
+        // HashSet 方法
+        if (IsHashSetMethod(method, ma, args, inv, out var setResult))
+            return setResult;
 
         // Dictionary 方法
         if (IsDictionaryMethod(method, ma, args, inv, out var dictResult))
@@ -125,6 +135,8 @@ internal partial class TfwrSyntaxWalker
 
         switch (method)
         {
+            // ====== 支持的方法 ======
+
             case "Add":
                 result = $"{listExpr}.append({args})";
                 return true;
@@ -154,12 +166,14 @@ internal partial class TfwrSyntaxWalker
                 return true;
 
             case "FirstOrDefault" when inv.ArgumentList.Arguments.Count == 0:
-                WarnUnsupportedMethod(method, "use if-else instead)", inv);
+                // 不支持三元表达式，FirstOrDefault 需要用户手动实现
+                WarnUnsupportedMethod(method, "List.FirstOrDefault (use if-else or try-except instead)", inv);
                 result = $"# UNSUPPORTED: {listExpr}.FirstOrDefault() - use if len({listExpr}) > 0: x = {listExpr}[0]";
                 return true;
 
             case "LastOrDefault" when inv.ArgumentList.Arguments.Count == 0:
-                WarnUnsupportedMethod(method, "use if-else instead)", inv);
+                // 不支持三元表达式，LastOrDefault 需要用户手动实现
+                WarnUnsupportedMethod(method, "List.LastOrDefault (use if-else or try-except instead)", inv);
                 result = $"# UNSUPPORTED: {listExpr}.LastOrDefault() - use if len({listExpr}) > 0: x = {listExpr}[-1]";
                 return true;
 
@@ -172,18 +186,20 @@ internal partial class TfwrSyntaxWalker
                 return true;
 
             case "ElementAtOrDefault" when inv.ArgumentList.Arguments.Count == 1:
+                // 不支持三元表达式，ElementAtOrDefault 需要用户手动实现
                 WarnUnsupportedMethod(method, "List.ElementAtOrDefault (use if-else or try-except instead)", inv);
                 result = $"# UNSUPPORTED: {listExpr}.ElementAtOrDefault({args}) - use if {args} < len({listExpr}): x = {listExpr}[{args}]";
                 return true;
 
             case "IndexOf" when inv.ArgumentList.Arguments.Count == 1:
-                WarnUnsupportedMethod(method, "List.Sort", inv);
-                result = $"# UNSUPPORTED: {listExpr}.index({args})";
+                result = $"{listExpr}.index({args})";
                 return true;
 
             case "RemoveAt" when inv.ArgumentList.Arguments.Count == 1:
                 result = $"{listExpr}.pop({args})";
                 return true;
+
+            // ====== 不支持的方法（输出警告） ======
 
             case "Sort":
                 WarnUnsupportedMethod(method, "List.Sort", inv);
@@ -318,6 +334,103 @@ internal partial class TfwrSyntaxWalker
         Console.WriteLine($"[警告] 不支持的方法: {method} ({description}) at line {lineNumber}");
     }
 
+    /// <summary>
+    /// 处理 HashSet 方法调用
+    /// </summary>
+    private bool IsHashSetMethod(string method, MemberAccessExpressionSyntax ma, string args, InvocationExpressionSyntax inv, out string result)
+    {
+        result = string.Empty;
+        var setExpr = TranspileExpression(ma.Expression);
+
+        switch (method)
+        {
+            // ====== 支持的方法 ======
+
+            case "Add" when inv.ArgumentList.Arguments.Count == 1:
+                result = $"{setExpr}.add({args})";
+                return true;
+
+            case "Remove" when inv.ArgumentList.Arguments.Count == 1:
+                result = $"{setExpr}.remove({args})";
+                return true;
+
+            case "Contains" when inv.ArgumentList.Arguments.Count == 1:
+                result = $"{args} in {setExpr}";
+                return true;
+
+            case "Clear" when inv.ArgumentList.Arguments.Count == 0:
+                result = $"{setExpr}.clear()";
+                return true;
+
+            // ====== 不确定是否支持的方法 ======
+
+            case "Count" when inv.ArgumentList.Arguments.Count == 0:
+                // 不确定游戏是否支持 len(set)
+                WarnUnsupportedMethod(method, "HashSet.Count (不确定游戏是否支持)", inv);
+                result = $"len({setExpr})  # UNCERTAIN: 游戏可能不支持";
+                return true;
+
+            case "Any" when inv.ArgumentList.Arguments.Count == 0:
+                // 不确定游戏是否支持
+                WarnUnsupportedMethod(method, "HashSet.Any (不确定游戏是否支持)", inv);
+                result = $"(len({setExpr}) > 0)  # UNCERTAIN: 游戏可能不支持";
+                return true;
+
+            // ====== 不支持的方法（输出警告） ======
+
+            case "UnionWith":
+            case "IntersectWith":
+            case "ExceptWith":
+            case "SymmetricExceptWith":
+                WarnUnsupportedMethod(method, "HashSet set operations", inv);
+                result = $"# UNSUPPORTED: {setExpr}.{ToSnakeCase(method)}()";
+                return true;
+
+            case "IsSubsetOf":
+            case "IsSupersetOf":
+            case "IsProperSubsetOf":
+            case "IsProperSupersetOf":
+            case "Overlaps":
+            case "SetEquals":
+                WarnUnsupportedMethod(method, "HashSet comparison methods", inv);
+                result = $"# UNSUPPORTED: {setExpr}.{ToSnakeCase(method)}()";
+                return true;
+
+            case "CopyTo":
+            case "TrimExcess":
+            case "EnsureCapacity":
+                WarnUnsupportedMethod(method, $"HashSet.{method}", inv);
+                result = $"# UNSUPPORTED: {setExpr}.{ToSnakeCase(method)}()";
+                return true;
+
+            case "RemoveWhere":
+                WarnUnsupportedMethod(method, "HashSet.RemoveWhere", inv);
+                result = $"# UNSUPPORTED: {setExpr}.remove_where() - use for loop with condition";
+                return true;
+
+            // LINQ 方法
+            case "Where":
+            case "Select":
+            case "OrderBy":
+            case "OrderByDescending":
+                WarnUnsupportedMethod(method, "LINQ on HashSet", inv);
+                result = $"# UNSUPPORTED: {setExpr} LINQ query";
+                return true;
+
+            case "ToList":
+            case "ToArray":
+                WarnUnsupportedMethod(method, "HashSet.ToList/ToArray (可能不需要，集合可以直接遍历)", inv);
+                result = $"# UNSUPPORTED: {setExpr}.{ToSnakeCase(method)}() - 集合可以直接遍历";
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// 处理 Dictionary 方法调用
+    /// </summary>
     private bool IsDictionaryMethod(string method, MemberAccessExpressionSyntax ma, string args, InvocationExpressionSyntax inv, out string result)
     {
         result = string.Empty;
@@ -351,7 +464,7 @@ internal partial class TfwrSyntaxWalker
                 return false;
 
             case "Remove" when inv.ArgumentList.Arguments.Count == 1:
-                result = $"del {dictExpr}[{args}]";
+                result = $"{dictExpr}.pop({args})";
                 return true;
 
             case "Clear" when inv.ArgumentList.Arguments.Count == 0:
@@ -359,14 +472,14 @@ internal partial class TfwrSyntaxWalker
                 return true;
 
             case "Keys" when inv.ArgumentList.Arguments.Count == 0:
-                result = $"list({dictExpr}.keys())";
+                WarnUnsupportedMethod(method, "Dictionary.Keys", inv);
+                result = $"# UNSUPPORTED: list({dictExpr}.keys())";
                 return true;
 
             case "Values" when inv.ArgumentList.Arguments.Count == 0:
-                result = $"list({dictExpr}.values())";
+                WarnUnsupportedMethod(method, "Dictionary.Values", inv);
+                result = $"# UNSUPPORTED: list({dictExpr}.values())";
                 return true;
-
-            // ====== 不支持的方法（输出警告） ======
 
             case "TryAdd":
                 WarnUnsupportedMethod(method, "Dictionary.TryAdd", inv);
@@ -427,8 +540,15 @@ internal partial class TfwrSyntaxWalker
 
                 // 跨文件的类 → module.field
                 RegisterCrossFileImportIfNeeded(typeName);
-                var moduleName = ToSnakeCase(typeName);
-                return $"{moduleName}.{ToSnakeCase(member)}";
+
+                // 使用类所在的文件名作为模块名
+                if (classToFileMap.TryGetValue(typeName, out var fileName))
+                {
+                    var moduleName = ToSnakeCase(fileName);
+                    return $"{moduleName}.{ToSnakeCase(member)}";
+                }
+                // 降级：如果找不到映射，使用类名
+                return $"{ToSnakeCase(typeName)}.{ToSnakeCase(member)}";
             }
         }
 

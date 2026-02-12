@@ -7,7 +7,11 @@ namespace TFWR.CS.Transpiler;
 /// <summary>
 /// Roslyn SyntaxWalker，遍历 C# AST 并输出 TFWR 脚本。
 /// </summary>
-internal partial class TfwrSyntaxWalker(PythonCodeBuilder builder, bool isEntryFile, IReadOnlySet<string> knownCsFiles) : CSharpSyntaxWalker
+internal partial class TfwrSyntaxWalker(
+    PythonCodeBuilder builder,
+    bool isEntryFile,
+    IReadOnlyDictionary<string, string> classToFileMap,
+    string currentFileName) : CSharpSyntaxWalker
 {
     private readonly HashSet<string> _globalVarsWritten = [];
     private string? _entryPointFuncName;
@@ -18,7 +22,7 @@ internal partial class TfwrSyntaxWalker(PythonCodeBuilder builder, bool isEntryF
     // 当前文件中定义的所有类名
     private readonly HashSet<string> _localClassNames = [];
 
-    // 跨文件引用的类名 → 需要自动生成 import
+    // 跨文件引用的类名 → 需要自动生成 import（存储文件名而非类名）
     private readonly HashSet<string> _crossFileImports = [];
 
     // ========================================================================
@@ -30,14 +34,14 @@ internal partial class TfwrSyntaxWalker(PythonCodeBuilder builder, bool isEntryF
         foreach (var cls in node.DescendantNodes().OfType<ClassDeclarationSyntax>())
             _localClassNames.Add(cls.Identifier.Text);
 
-        // 遍历成员（顶级语句 / 类 / 命名空间等）
+        // 步骤2：成员遍历（类 / 方法 / 命名空间等）
         foreach (var member in node.Members)
             Visit(member);
 
         // ── 在文件头部插入跨文件引用的 import（自动检测）──
-        foreach (var className in _crossFileImports.Order())
+        foreach (var fileName in _crossFileImports.Order())
         {
-            var moduleName = ToSnakeCase(className);
+            var moduleName = ToSnakeCase(fileName);
             builder.InsertImportAfterExisting($"import {moduleName}");
         }
     }

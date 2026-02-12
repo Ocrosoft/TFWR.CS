@@ -79,4 +79,10 @@ Properties/PublishProfiles/
 *.pubxml
 *.pubxml.user
 
+# Publish output
+SampleProject.zip
+SampleProject/TFWR.CS/
+SampleProject/cs/TFWR.CS.REF.dll
+SampleProject/cs/TFWR.CS.REF.xml
+
 # End of file

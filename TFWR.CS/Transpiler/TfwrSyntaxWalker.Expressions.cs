@@ -111,6 +111,17 @@ internal partial class TfwrSyntaxWalker
             _ => bin.OperatorToken.Text
         };
 
+        // 位运算符警告
+        if (bin.IsKind(SyntaxKind.BitwiseAndExpression) || 
+            bin.IsKind(SyntaxKind.BitwiseOrExpression) ||
+            bin.IsKind(SyntaxKind.ExclusiveOrExpression) ||
+            bin.IsKind(SyntaxKind.LeftShiftExpression) ||
+            bin.IsKind(SyntaxKind.RightShiftExpression))
+        {
+            var lineNumber = bin.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            Console.WriteLine($"[警告] 位运算符 ({op}) 游戏可能不支持 at line {lineNumber}");
+        }
+
         // Null coalescing: a ?? b
         // 在表达式上下文中无法生成 if-else 语句，输出警告
         if (bin.IsKind(SyntaxKind.CoalesceExpression))
@@ -134,6 +145,14 @@ internal partial class TfwrSyntaxWalker
     private string TranspilePrefixUnary(PrefixUnaryExpressionSyntax pre)
     {
         var operand = TranspileExpression(pre.Operand);
+        
+        // 按位取反警告
+        if (pre.OperatorToken.Text == "~")
+        {
+            var lineNumber = pre.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            Console.WriteLine($"[警告] 按位取反运算符 (~) 游戏可能不支持 at line {lineNumber}");
+        }
+    
         return pre.OperatorToken.Text switch
         {
             "!" => $"not {operand}",
@@ -184,6 +203,17 @@ internal partial class TfwrSyntaxWalker
             _ => assign.OperatorToken.Text
         };
 
+        // 位赋值运算符警告
+        if (assign.IsKind(SyntaxKind.AndAssignmentExpression) ||
+            assign.IsKind(SyntaxKind.OrAssignmentExpression) ||
+            assign.IsKind(SyntaxKind.ExclusiveOrAssignmentExpression) ||
+            assign.IsKind(SyntaxKind.LeftShiftAssignmentExpression) ||
+            assign.IsKind(SyntaxKind.RightShiftAssignmentExpression))
+        {
+            var lineNumber = assign.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            Console.WriteLine($"[警告] 位赋值运算符 ({op}) 游戏可能不支持 at line {lineNumber}");
+        }
+
         return $"{left} {op} {right}";
     }
 
@@ -191,11 +221,11 @@ internal partial class TfwrSyntaxWalker
     {
         var lineNumber = cond.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
         Console.WriteLine($"[警告] 三元条件表达式 (? :) 不支持，请改用 if-else 语句 at line {lineNumber}");
-        
+
         var whenTrue = TranspileExpression(cond.WhenTrue);
         var whenFalse = TranspileExpression(cond.WhenFalse);
         var condition = TranspileExpression(cond.Condition);
-  
+
         return $"/* UNSUPPORTED: {condition} ? {whenTrue} : {whenFalse} - use if-else statement */";
     }
 
@@ -229,7 +259,16 @@ internal partial class TfwrSyntaxWalker
             return obj.Initializer != null ? TranspileInitializer(obj.Initializer) : "{}";
 
         if (typeName.StartsWith("HashSet<"))
-            return obj.Initializer != null ? $"set({TranspileInitializer(obj.Initializer)})" : "set()";
+        {
+            // HashSet<T>() → set() 或 {elem1, elem2, ...}
+            if (obj.Initializer != null)
+            {
+                // HashSet<T> { 1, 2, 3 } → {1, 2, 3}
+                var items = obj.Initializer.Expressions.Select(TranspileExpression);
+                return $"{{{string.Join(", ", items)}}}";
+            }
+            return "set()";
+        }
 
         if (typeName == "Random")
             return "None";
@@ -311,7 +350,7 @@ internal partial class TfwrSyntaxWalker
         // 情况1: 变量声明初始化器 var x = new();
         if (parent is EqualsValueClauseSyntax equalsValue &&
             equalsValue.Parent is VariableDeclaratorSyntax declarator &&
-        declarator.Parent is VariableDeclarationSyntax declaration)
+            declarator.Parent is VariableDeclarationSyntax declaration)
         {
             return declaration.Type.ToString();
         }
@@ -326,7 +365,7 @@ internal partial class TfwrSyntaxWalker
 
         // 情况3: 方法参数 Method(new());
         if (parent is ArgumentSyntax argument &&
-    argument.Parent is ArgumentListSyntax argList &&
+            argument.Parent is ArgumentListSyntax argList &&
             argList.Parent is InvocationExpressionSyntax invocation)
         {
             // 需要方法签名信息，暂时无法准确推断
@@ -335,10 +374,10 @@ internal partial class TfwrSyntaxWalker
 
         // 情况4: 集合初始化器 [new(), new()]
         if (parent is ExpressionElementSyntax expressionElement &&
-                expressionElement.Parent is CollectionExpressionSyntax collectionExpr &&
-                collectionExpr.Parent is EqualsValueClauseSyntax equalsValue2 &&
-                equalsValue2.Parent is VariableDeclaratorSyntax declarator2 &&
-                declarator2.Parent is VariableDeclarationSyntax declaration2)
+            expressionElement.Parent is CollectionExpressionSyntax collectionExpr &&
+            collectionExpr.Parent is EqualsValueClauseSyntax equalsValue2 &&
+            equalsValue2.Parent is VariableDeclaratorSyntax declarator2 &&
+            declarator2.Parent is VariableDeclarationSyntax declaration2)
         {
             var collectionType = declaration2.Type.ToString();
             // List<T> 或 T[] → 提取元素类型 T
@@ -401,23 +440,193 @@ internal partial class TfwrSyntaxWalker
 
     private string TranspileCollectionExpression(CollectionExpressionSyntax coll)
     {
+        // 尝试从父节点推断集合类型
+        var inferredType = InferCollectionTypeFromContext(coll);
+
+        // 如果是空集合表达式 []
+        if (coll.Elements.Count == 0)
+        {
+            // 如果无法推断类型，输出警告
+            if (inferredType == null)
+            {
+                var lineNumber = coll.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                Console.WriteLine($"[警告] 无法推断集合表达式 [] 的目标类型，默认转换为空列表 at line {lineNumber}");
+                return "[]  # WARNING: Cannot infer type, defaulting to list";
+            }
+
+            // 根据推断的类型返回相应的空集合
+            if (inferredType.StartsWith("Dictionary<") || inferredType.StartsWith("Dict"))
+                return "{}";
+            if (inferredType.StartsWith("HashSet<"))
+                return "set()";
+
+            // 默认：空列表
+            return "[]";
+        }
+
+        // 非空集合表达式：生成元素列表
         var items = coll.Elements.Select(e =>
-    {
-        if (e is ExpressionElementSyntax exprElem)
-            return TranspileExpression(exprElem.Expression);
-        return e.ToString();
-    });
+        {
+            if (e is ExpressionElementSyntax exprElem)
+                return TranspileExpression(exprElem.Expression);
+            return e.ToString();
+        });
+
+        // 如果无法推断类型，输出警告
+        if (inferredType == null)
+        {
+            var lineNumber = coll.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            Console.WriteLine($"[警告] 无法推断集合表达式的目标类型，默认转换为列表 at line {lineNumber}");
+            return $"[{string.Join(", ", items)}]  # WARNING: Cannot infer type, defaulting to list";
+        }
+
+        // 对于 HashSet，使用集合字面量 {elem1, elem2, ...}
+        if (inferredType.StartsWith("HashSet<"))
+        {
+            return $"{{{string.Join(", ", items)}}}";
+        }
+
+        // 对于 Dictionary，需要特殊处理（虽然集合表达式语法不常用于 Dictionary）
+        if (inferredType.StartsWith("Dictionary<") || inferredType.StartsWith("Dict"))
+        {
+            var lineNumber = coll.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            Console.WriteLine($"[警告] Dictionary 不建议使用集合表达式语法，推荐使用 new Dictionary<K,V>() at line {lineNumber}");
+            // Dictionary 集合表达式通常不直接支持，但如果有，应该生成 {}
+            // 这里暂时返回列表，实际使用中应避免这种写法
+            return $"[{string.Join(", ", items)}]  # WARNING: Dictionary with collection expression is not recommended";
+        }
+
         return $"[{string.Join(", ", items)}]";
+    }
+
+    /// <summary>
+    /// 从上下文推断集合表达式的目标类型
+    /// </summary>
+    private static string? InferCollectionTypeFromContext(CollectionExpressionSyntax coll)
+    {
+        var parent = coll.Parent;
+
+        // 情况1: 变量声明初始化器 Type x = [];
+        if (parent is EqualsValueClauseSyntax equalsValue &&
+            equalsValue.Parent is VariableDeclaratorSyntax declarator &&
+            declarator.Parent is VariableDeclarationSyntax declaration)
+        {
+            return declaration.Type.ToString();
+        }
+
+        // 情况2: 赋值表达式右侧 x = [];
+        // 尝试从左侧标识符推断类型（需要向上查找变量声明）
+        if (parent is AssignmentExpressionSyntax assignment)
+        {
+            // 如果左侧是简单标识符，尝试查找其声明
+            if (assignment.Left is IdentifierNameSyntax identifier)
+            {
+                var varName = identifier.Identifier.Text;
+                var inferredType = FindVariableDeclarationType(coll, varName);
+                if (inferredType != null)
+                {
+                    return inferredType;
+                }
+            }
+            return null;
+        }
+
+        // 情况3: 方法参数 Method([]);
+        if (parent is ArgumentSyntax argument &&
+            argument.Parent is ArgumentListSyntax argList &&
+            argList.Parent is InvocationExpressionSyntax invocation)
+        {
+            // 需要方法签名信息，暂时无法准确推断
+            return null;
+        }
+
+        // 情况4: return [];
+        // 尝试从方法返回类型推断
+        if (parent is ReturnStatementSyntax)
+        {
+            var inferredType = FindMethodReturnType(coll);
+            if (inferredType != null)
+            {
+                return inferredType;
+            }
+            return null;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 查找变量的声明类型（向上遍历语法树查找声明）
+    /// </summary>
+    private static string? FindVariableDeclarationType(SyntaxNode startNode, string variableName)
+    {
+        var currentNode = startNode.Parent;
+
+        while (currentNode != null)
+        {
+            // 在当前作用域中查找变量声明
+            var declarations = currentNode.DescendantNodes()
+     .OfType<VariableDeclarationSyntax>()
+                .Where(d => d.Variables.Any(v => v.Identifier.Text == variableName));
+
+            foreach (var declaration in declarations)
+            {
+                // 确保声明在赋值之前（通过位置判断）
+                if (declaration.SpanStart < startNode.SpanStart)
+                {
+                    return declaration.Type.ToString();
+                }
+            }
+
+            // 向上移动到父节点
+            currentNode = currentNode.Parent;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 查找包含此 return 语句的方法的返回类型
+    /// </summary>
+    private static string? FindMethodReturnType(SyntaxNode startNode)
+    {
+        var currentNode = startNode.Parent;
+
+        while (currentNode != null)
+        {
+            // 检查是否是方法声明
+            if (currentNode is MethodDeclarationSyntax method)
+            {
+                return method.ReturnType.ToString();
+            }
+
+            // 检查是否是局部函数
+            if (currentNode is LocalFunctionStatementSyntax localFunc)
+            {
+                return localFunc.ReturnType.ToString();
+            }
+
+            // 检查是否是 Lambda 表达式（虽然不支持，但为完整性考虑）
+            if (currentNode is SimpleLambdaExpressionSyntax or ParenthesizedLambdaExpressionSyntax)
+            {
+                // Lambda 的返回类型无法从语法树获取
+                return null;
+            }
+
+            currentNode = currentNode.Parent;
+        }
+
+        return null;
     }
 
     private string TranspileInterpolatedString(InterpolatedStringExpressionSyntax interp)
     {
         var parts = interp.Contents.Select(c => c switch
-   {
-       InterpolatedStringTextSyntax text => text.TextToken.Text,
-       InterpolationSyntax hole => $"\" + str({TranspileExpression(hole.Expression)}) + \"",
-       _ => c.ToString()
-   });
+             {
+                 InterpolatedStringTextSyntax text => text.TextToken.Text,
+                 InterpolationSyntax hole => $"\" + str({TranspileExpression(hole.Expression)}) + \"",
+                 _ => c.ToString()
+             });
         return $"\"{string.Join("", parts)}\"";
     }
 
@@ -447,17 +656,17 @@ internal partial class TfwrSyntaxWalker
         return isPat.Pattern switch
         {
             ConstantPatternSyntax cp when cp.Expression.IsKind(SyntaxKind.NullLiteralExpression)
-     => $"{expr} is None",
+                => $"{expr} is None",
             UnaryPatternSyntax { OperatorToken.Text: "not", Pattern: ConstantPatternSyntax { Expression: var e } }
-          when e.IsKind(SyntaxKind.NullLiteralExpression)
-         => $"{expr} is not None",
+            when e.IsKind(SyntaxKind.NullLiteralExpression)
+            => $"{expr} is not None",
             _ => $"# is pattern: {isPat}"
         };
     }
 
     private static string TranspileTypeName(TypeSyntax type) => type.ToString();
 
-    private string TranspileDeclarationExpression(DeclarationExpressionSyntax declExpr)
+    private static string TranspileDeclarationExpression(DeclarationExpressionSyntax declExpr)
     {
         // 处理像 var (x, y) 这样的解构声明表达式
         if (declExpr.Designation is ParenthesizedVariableDesignationSyntax parenDesignation)

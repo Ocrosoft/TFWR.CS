@@ -93,11 +93,11 @@ public static class NameMappings
 
     /// <summary>是否为 Direction 值，游戏中作为全局常量使用。</summary>
     public static bool IsDirectionValue(string valueName)
-            => DirectionValues.Contains(valueName);
+        => DirectionValues.Contains(valueName);
 
     /// <summary>获取 Direction 值在游戏中的实际名称（Up→North 等）。</summary>
     public static string NormalizeDirection(string valueName)
-    => DirectionAliases.TryGetValue(valueName, out var normalized) ? normalized : valueName;
+        => DirectionAliases.TryGetValue(valueName, out var normalized) ? normalized : valueName;
 
     /// <summary>尝试获取 .NET 静态方法对应的内置函数。</summary>
     public static bool TryGetDotNetBuiltin(string dotnetCall, out string gameFunc)
