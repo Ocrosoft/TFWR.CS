@@ -9,6 +9,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TFWR.CS.REF", "TFWR.CS.REF\
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "解决方案项", "解决方案项", "{9FA3D6BD-1EC1-3BA5-80CB-CE02773A58D5}"
 	ProjectSection(SolutionItems) = preProject
+		publish.ps1 = publish.ps1
 		README.md = README.md
 		README.zh.md = README.zh.md
 	EndProjectSection
