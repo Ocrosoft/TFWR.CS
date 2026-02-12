@@ -1,51 +1,53 @@
-# 简介
+# [中文版](README.zh.md)
 
-本项目是一个面向《编程农场》（The Farmer Was Replaced）游戏的 C# 到游戏使用的类 Python 代码自动转换工具。
+# Introduction
 
-## 功能特性
+This project is an automatic transpiler that converts C# code to Python-like code for use in the game "The Farmer Was Replaced" (TFWR).
 
-- 支持以 C# 编写《编程农场》游戏脚本
-- 运行时自动将 C# 代码转译为游戏支持的类 Python 代码
+## Features
 
-## 依赖说明
+- Write TFWR game scripts in C#
+- Automatically transpile C# code to Python-like code supported by the game at runtime
 
-在编写游戏脚本时，请务必引用 `TFWR.CS.REF` 包。该包内包含了游戏内置方法的声明，便于获得代码补全与类型提示体验。
+## Dependencies
 
-## 快速开始
+When writing game scripts, make sure to reference the `TFWR.CS.REF` package. This package contains declarations for in-game built-in methods, providing code completion and type hints.
 
-待完善。
+## Quick Start
 
-## 注意事项
+To be completed.
 
-- 本项目仍处于开发阶段，仅供学习与娱乐。
-- 由于《编程农场》脚本语法有限，部分 C# 语法和特性无法被完整支持。
-- 暂不支持调试 C# 代码。若需单步运行或调试，请在游戏内对生成代码进行调试。
+## Notes
 
-## 免责声明
+- This project is under development and for learning/entertainment only.
+- Some C# syntax and features are not fully supported due to TFWR script limitations.
+- Debugging C# code is not supported. For step-by-step debugging, debug the generated code inside the game.
 
-本项目为个人开发，与《编程农场》官方无任何关联。请勿将本项目用于商业用途。
+## Disclaimer
 
-## 语法与特性支持说明（正在补充中）
+This project is developed independently and is not affiliated with the official TFWR game. Do not use this project for commercial purposes.
 
-### 不支持或有限支持的用法
+## Syntax and Feature Support (WIP)
 
-- **单文件多类/成员重复**：建议每个文件只包含一个类，避免成员冲突。
-- **继承**：类继承关系会被忽略。
-- **结构体**：结构体将被视为普通类处理。
-- **构造方法**：构造方法会被当作普通方法调用，不会自动生成默认构造函数。
-- **Lambda 表达式**：Lambda 会被注释包裹，无法运行，转译时会有警告。
-- **LINQ**：不支持 LINQ 相关方法（如 `Where`, `Select`, `OrderBy` 等），使用时会有警告。
-- **三元表达式与 null 合并**：不支持 `condition ? a : b` 和 `??`，请用 if-else 替代。
+### Unsupported or Limited Features
 
-**❌ 不支持：**
+- **Multiple classes/members per file:** Only one class per file is recommended to avoid conflicts.
+- **Inheritance:** Class inheritance is ignored.
+- **Structs:** Structs are treated as regular classes.
+- **Constructors:** Constructors are treated as normal methods and default constructors are not auto-generated.
+- **Lambda expressions:** Lambdas are commented out and not executable; warnings will be issued during transpilation.
+- **LINQ:** LINQ methods (e.g., `Where`, `Select`, `OrderBy`) are not supported and will trigger warnings.
+- **Ternary and null-coalescing:** `condition ? a : b` and `??` are not supported; use if-else instead.
+
+**❌ Not supported:**
 ```csharp
 var result = condition ? trueValue : falseValue;
 var value = nullableValue ?? defaultValue;
 ```
 
-**✅ 推荐写法：**
+**✅ Recommended:**
 ```csharp
-// 三元表达式改用 if-else
+// Replace ternary with if-else
 var result;
 if (condition)
 {
@@ -56,7 +58,7 @@ else
     result = falseValue;
 }
 
-// null coalescing 改用 if-else
+// Replace null-coalescing with if-else
 var value;
 if (nullableValue != null)
 {
@@ -68,9 +70,9 @@ else
 }
 ```
 
-### List 支持方法
+### Supported List Methods
 
-**✅ 支持：**
+**✅ Supported:**
 ```csharp
 Add(item)           // → list.append(item)
 Remove(item)        // → list.remove(item)
@@ -85,17 +87,17 @@ IndexOf(item)       // → list.index(item)
 RemoveAt(index)     // → del list[index]
 ```
 
-**⚠️ 不支持（会警告）：**
-- `FirstOrDefault()`, `LastOrDefault()`, `ElementAtOrDefault()` - 依赖三元表达式，请用 if-else
-- `Sort()`, `Reverse()` - 排序和反转
-- `Where()`, `Select()`, `OrderBy()` 等 LINQ
-- `Find()`, `FindAll()`, `Exists()` 等谓词
-- `AddRange()`, `RemoveRange()` 等批量操作
-- `ForEach()` - 请用 for 循环
+**⚠️ Not supported (will warn):**
+- `FirstOrDefault()`, `LastOrDefault()`, `ElementAtOrDefault()` - Use if-else instead
+- `Sort()`, `Reverse()` - Sorting and reversing
+- `Where()`, `Select()`, `OrderBy()` and other LINQ
+- `Find()`, `FindAll()`, `Exists()` and other predicates
+- `AddRange()`, `RemoveRange()` and other batch operations
+- `ForEach()` - Use a for loop
 
-### Dictionary 支持方法
+### Supported Dictionary Methods
 
-**✅ 支持：**
+**✅ Supported:**
 ```csharp
 ContainsKey(key)      // → key in dict
 ContainsValue(value)  // → value in dict.values()
@@ -106,27 +108,27 @@ Keys()                // → list(dict.keys())
 Values()              // → list(dict.values())
 ```
 
-**⚠️ 不支持（会警告）：**
-- `TryGetValue(key, out value)` - 用 `dict.get(key, None)` 替代
-- `GetValueOrDefault(key)` - 用 `dict.get(key, None)` 替代
-- `TryAdd()`, `EnsureCapacity()` 等其他方法
+**⚠️ Not supported (will warn):**
+- `TryGetValue(key, out value)` - Use `dict.get(key, None)` instead
+- `GetValueOrDefault(key)` - Use `dict.get(key, None)` instead
+- `TryAdd()`, `EnsureCapacity()` and other methods
 
-### 对象创建与注意事项
+### Object Creation and Notes
 
-**✅ 推荐写法：**
+**✅ Recommended:**
 ```csharp
 List<string> list = new();                // → list = []
 Dictionary<int, string> dict = new();     // → dict = {}
 List<KeyValuePair<int, int>> pairs = [new(1, 2)];  // → pairs = [(1, 2)]
 ```
 
-**注意：**
-- `KeyValuePair<K, V>` 会被转为元组 `(key, value)`
-- 避免使用 List 的带参构造函数
-- 不要忽略列表读取方法的返回值，否则游戏会报错
+**Notes:**
+- `KeyValuePair<K, V>` is converted to tuple `(key, value)`
+- Avoid using List constructors with parameters
+- Do not ignore the return value of list access methods, or the game will throw errors
 
-**❌ 避免写法：**
+**❌ Avoid:**
 ```csharp
-list.First();  // 忽略返回值，游戏不允许
-list[0];       // 忽略返回值，游戏不允许
+list.First();  // Ignoring return value is not allowed in the game
+list[0];       // Ignoring return value is not allowed in the game
 ```
