@@ -70,6 +70,15 @@ The following syntax will be **ignored or produce errors** — avoid using:
 - Debugging C# code is not supported; debug generated code inside the game
 - Do not ignore list access method return values, or the game will throw errors
 - Avoid using `List` constructors with parameters
+- **Tuple return values do not support named field access** (e.g. `ret.x`) — use destructuring:
+  ```csharp
+  // ❌ Not supported
+  var ret = GetPosition();
+  var px = ret.x;
+
+  // ✅ Correct
+  var (x, y) = GetPosition();
+  ```
 
 ## Disclaimer
 

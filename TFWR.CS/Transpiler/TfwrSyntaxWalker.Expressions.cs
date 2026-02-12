@@ -42,6 +42,14 @@ internal partial class TfwrSyntaxWalker
             TypeOfExpressionSyntax typeOf => $"type({TranspileTypeName(typeOf.Type)})",
             IsPatternExpressionSyntax isPat => TranspileIsPattern(isPat),
             LambdaExpressionSyntax lambda => HandleUnsupportedExpression(lambda, "Lambda 表达式"),
+            ConditionalAccessExpressionSyntax condAccess => HandleUnsupportedExpression(condAccess, "空条件访问操作符 (?.)，请改用 if-else 判空"),
+            SwitchExpressionSyntax switchExpr => HandleUnsupportedExpression(switchExpr, "switch 表达式，请改用 if-else 或 switch 语句"),
+            ThrowExpressionSyntax throwExpr => HandleUnsupportedExpression(throwExpr, "throw 表达式"),
+            AwaitExpressionSyntax awaitExpr => HandleUnsupportedExpression(awaitExpr, "await 表达式"),
+            QueryExpressionSyntax queryExpr => HandleUnsupportedExpression(queryExpr, "LINQ 查询表达式"),
+            RangeExpressionSyntax rangeExpr => HandleUnsupportedExpression(rangeExpr, "范围运算符 (..)"),
+            AnonymousObjectCreationExpressionSyntax anonObj => HandleUnsupportedExpression(anonObj, "匿名类型"),
+            BaseExpressionSyntax baseExpr => HandleUnsupportedExpression(baseExpr, "base 表达式（不支持继承）"),
             _ => HandleUnsupportedExpression(expr, "未知表达式")
         };
     }
@@ -112,7 +120,7 @@ internal partial class TfwrSyntaxWalker
         };
 
         // 位运算符警告
-        if (bin.IsKind(SyntaxKind.BitwiseAndExpression) || 
+        if (bin.IsKind(SyntaxKind.BitwiseAndExpression) ||
             bin.IsKind(SyntaxKind.BitwiseOrExpression) ||
             bin.IsKind(SyntaxKind.ExclusiveOrExpression) ||
             bin.IsKind(SyntaxKind.LeftShiftExpression) ||
@@ -145,14 +153,14 @@ internal partial class TfwrSyntaxWalker
     private string TranspilePrefixUnary(PrefixUnaryExpressionSyntax pre)
     {
         var operand = TranspileExpression(pre.Operand);
-        
+
         // 按位取反警告
         if (pre.OperatorToken.Text == "~")
         {
             var lineNumber = pre.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
             Console.WriteLine($"[警告] 按位取反运算符 (~) 游戏可能不支持 at line {lineNumber}");
         }
-    
+
         return pre.OperatorToken.Text switch
         {
             "!" => $"not {operand}",
@@ -660,8 +668,15 @@ internal partial class TfwrSyntaxWalker
             UnaryPatternSyntax { OperatorToken.Text: "not", Pattern: ConstantPatternSyntax { Expression: var e } }
             when e.IsKind(SyntaxKind.NullLiteralExpression)
             => $"{expr} is not None",
-            _ => $"# is pattern: {isPat}"
+            _ => HandleUnsupportedIsPattern(isPat)
         };
+    }
+
+    private string HandleUnsupportedIsPattern(IsPatternExpressionSyntax isPat)
+    {
+        var lineNumber = isPat.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        Console.WriteLine($"[警告] 不支持的 is 模式匹配: {isPat.Pattern.Kind()}，仅支持 is null / is not null at line {lineNumber}");
+        return $"/* UNSUPPORTED: {isPat} */";
     }
 
     private static string TranspileTypeName(TypeSyntax type) => type.ToString();

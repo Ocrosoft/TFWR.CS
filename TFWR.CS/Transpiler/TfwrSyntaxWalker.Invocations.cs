@@ -564,6 +564,140 @@ internal partial class TfwrSyntaxWalker
         if (member == "Value")
             return TranspileExpression(obj);
 
+        // 检查是否可能是对元组命名字段的访问（如 ret.x, ret.y）
+        // 游戏的 Python 不支持元组的命名字段访问，必须使用解构 var (x, y) = ... 或索引 ret[0]
+        if (obj is IdentifierNameSyntax varId && IsPossibleTupleFieldAccess(varId, member))
+        {
+            var lineNumber = ma.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            Console.WriteLine($"[警告] 疑似元组命名字段访问: {varId.Identifier.Text}.{member}，游戏不支持此语法 at line {lineNumber}");
+            Console.WriteLine($"  → 请改用解构赋值: var ({GetTupleElementNames(varId)}) = {ToSnakeCase(varId.Identifier.Text)} 然后直接使用变量");
+        }
+
         return $"{TranspileExpression(obj)}.{ToSnakeCase(member)}";
+    }
+
+    /// <summary>
+    /// 判断是否可能是对元组返回值的命名字段访问。
+    /// 通过查找变量的初始化表达式是否来自一个返回元组类型的方法调用来判断。
+    /// </summary>
+    private bool IsPossibleTupleFieldAccess(IdentifierNameSyntax varId, string memberName)
+    {
+        var varName = varId.Identifier.Text;
+
+        // 向上查找变量的声明
+        var currentNode = varId.Parent;
+        while (currentNode != null)
+        {
+            // 查找局部变量声明
+            foreach (var decl in currentNode.DescendantNodes().OfType<VariableDeclarationSyntax>())
+            {
+                foreach (var declarator in decl.Variables)
+                {
+                    if (declarator.Identifier.Text != varName)
+                        continue;
+                    if (declarator.SpanStart >= varId.SpanStart)
+                        continue;
+
+                    // 检查声明类型是否是元组类型
+                    if (decl.Type is TupleTypeSyntax tupleType)
+                    {
+                        // 检查成员名是否匹配元组元素名
+                        return tupleType.Elements.Any(e =>
+                                e.Identifier.Text.Equals(memberName, StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    // 检查初始化是否来自返回元组的方法
+                    if (declarator.Initializer?.Value is InvocationExpressionSyntax invocation)
+                    {
+                        var returnType = FindInvokedMethodReturnType(invocation);
+                        if (returnType is TupleTypeSyntax retTuple)
+                        {
+                            return retTuple.Elements.Any(e =>
+                                e.Identifier.Text.Equals(memberName, StringComparison.OrdinalIgnoreCase));
+                        }
+                    }
+                }
+            }
+
+            currentNode = currentNode.Parent;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 获取变量对应的元组元素名列表（用于警告提示）。
+    /// </summary>
+    private string GetTupleElementNames(IdentifierNameSyntax varId)
+    {
+        var varName = varId.Identifier.Text;
+        var currentNode = varId.Parent;
+
+        while (currentNode != null)
+        {
+            foreach (var decl in currentNode.DescendantNodes().OfType<VariableDeclarationSyntax>())
+            {
+                foreach (var declarator in decl.Variables)
+                {
+                    if (declarator.Identifier.Text != varName)
+                        continue;
+                    if (declarator.SpanStart >= varId.SpanStart)
+                        continue;
+
+                    TupleTypeSyntax? tupleType = null;
+
+                    if (decl.Type is TupleTypeSyntax t)
+                        tupleType = t;
+                    else if (declarator.Initializer?.Value is InvocationExpressionSyntax inv)
+                        tupleType = FindInvokedMethodReturnType(inv) as TupleTypeSyntax;
+
+                    if (tupleType != null)
+                    {
+                        var names = tupleType.Elements.Select(e =>
+                            string.IsNullOrEmpty(e.Identifier.Text)
+                                ? ToSnakeCase(e.Type.ToString())
+                                : ToSnakeCase(e.Identifier.Text));
+                        return string.Join(", ", names);
+                    }
+                }
+            }
+            currentNode = currentNode.Parent;
+        }
+
+        return "...";
+    }
+
+    /// <summary>
+    /// 查找被调用方法的返回类型（仅查找当前文件中的方法声明）。
+    /// </summary>
+    private static TypeSyntax? FindInvokedMethodReturnType(InvocationExpressionSyntax invocation)
+    {
+        string? methodName = invocation.Expression switch
+        {
+            IdentifierNameSyntax id => id.Identifier.Text,
+            MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
+            _ => null
+        };
+
+        if (methodName == null) return null;
+
+        // 从调用点向上找到编译单元，然后搜索方法声明
+        var root = invocation.SyntaxTree.GetRoot();
+
+        // 查找方法声明
+        foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
+        {
+            if (method.Identifier.Text == methodName)
+                return method.ReturnType;
+        }
+
+        // 查找局部函数
+        foreach (var localFunc in root.DescendantNodes().OfType<LocalFunctionStatementSyntax>())
+        {
+            if (localFunc.Identifier.Text == methodName)
+                return localFunc.ReturnType;
+        }
+
+        return null;
     }
 }

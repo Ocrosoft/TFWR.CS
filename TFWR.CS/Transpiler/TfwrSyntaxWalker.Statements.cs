@@ -68,6 +68,70 @@ internal partial class TfwrSyntaxWalker
                 VisitLocalFunctionStatement(localFunc);
                 break;
 
+            case TryStatementSyntax tryStmt:
+                WarnUnsupportedStatement(tryStmt, "try-catch-finally");
+                // 尝试转译 try 块体中的语句（忽略 catch/finally）
+                if (tryStmt.Block.Statements.Count > 0)
+                {
+                    builder.AppendLine("# WARNING: try-catch-finally not supported, executing try block only");
+                    VisitBlockBody(tryStmt.Block);
+                }
+                break;
+
+            case ThrowStatementSyntax throwStmt:
+                WarnUnsupportedStatement(throwStmt, "throw");
+                builder.AppendLine($"# UNSUPPORTED: throw");
+                break;
+
+            case UsingStatementSyntax usingStmt:
+                WarnUnsupportedStatement(usingStmt, "using 语句");
+                // 尝试转译 using 块体
+                if (usingStmt.Statement != null)
+                {
+                    builder.AppendLine("# WARNING: using statement not supported, executing body only");
+                    VisitStatementAsBody(usingStmt.Statement);
+                }
+                break;
+
+            case LockStatementSyntax lockStmt:
+                WarnUnsupportedStatement(lockStmt, "lock 语句");
+                if (lockStmt.Statement != null)
+                {
+                    builder.AppendLine("# WARNING: lock statement not supported, executing body only");
+                    VisitStatementAsBody(lockStmt.Statement);
+                }
+                break;
+
+            case YieldStatementSyntax yieldStmt:
+                WarnUnsupportedStatement(yieldStmt, "yield return/break");
+                builder.AppendLine($"# UNSUPPORTED: yield");
+                break;
+
+            case ForEachVariableStatementSyntax foreachVarStmt:
+                WarnUnsupportedStatement(foreachVarStmt, "foreach 解构（foreach var (x, y) in ...）");
+                builder.AppendLine($"# UNSUPPORTED: foreach deconstruction");
+                break;
+
+            case GotoStatementSyntax gotoStmt:
+                WarnUnsupportedStatement(gotoStmt, "goto");
+                builder.AppendLine($"# UNSUPPORTED: goto");
+                break;
+
+            case LabeledStatementSyntax labeledStmt:
+                WarnUnsupportedStatement(labeledStmt, "标签语句");
+                // 转译标签后面的语句
+                VisitStatement(labeledStmt.Statement);
+                break;
+
+            case CheckedStatementSyntax checkedStmt:
+                WarnUnsupportedStatement(checkedStmt, "checked/unchecked");
+                VisitBlockBody(checkedStmt.Block);
+                break;
+
+            case EmptyStatementSyntax:
+                // 空语句，不需要警告
+                break;
+
             default:
                 var message = $"无法转译的语句类型: {stmt.Kind()} at line {stmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1}";
                 Console.WriteLine($"[警告] {message}");
@@ -482,5 +546,11 @@ internal partial class TfwrSyntaxWalker
             VisitBlockBody(block);
         else
             VisitStatement(stmt);
+    }
+
+    private void WarnUnsupportedStatement(StatementSyntax stmt, string description)
+    {
+        var lineNumber = stmt.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        Console.WriteLine($"[警告] 不支持的语句: {description} at line {lineNumber}");
     }
 }

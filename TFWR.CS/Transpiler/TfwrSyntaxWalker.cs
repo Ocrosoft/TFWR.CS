@@ -59,12 +59,57 @@ internal partial class TfwrSyntaxWalker(
     // ========================================================================
     public override void VisitNamespaceDeclaration(NamespaceDeclarationSyntax node)
     {
-        foreach (var member in node.Members) Visit(member);
+        foreach (var member in node.Members)
+        {
+            WarnIfIgnoredTopLevelType(member);
+            Visit(member);
+        }
     }
 
     public override void VisitFileScopedNamespaceDeclaration(FileScopedNamespaceDeclarationSyntax node)
     {
-        foreach (var member in node.Members) Visit(member);
+        foreach (var member in node.Members)
+        {
+            WarnIfIgnoredTopLevelType(member);
+            Visit(member);
+        }
+    }
+
+    private static void WarnIfIgnoredTopLevelType(MemberDeclarationSyntax member)
+    {
+        switch (member)
+        {
+            case EnumDeclarationSyntax enumDecl:
+                {
+                    var lineNumber = enumDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                    Console.WriteLine($"[警告] 枚举声明被忽略: {enumDecl.Identifier.Text} at line {lineNumber}");
+                    break;
+                }
+            case InterfaceDeclarationSyntax iface:
+                {
+                    var lineNumber = iface.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                    Console.WriteLine($"[警告] 接口声明被忽略: {iface.Identifier.Text} at line {lineNumber}");
+                    break;
+                }
+            case StructDeclarationSyntax structDecl:
+                {
+                    var lineNumber = structDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                    Console.WriteLine($"[警告] 结构体声明被忽略（将当作类处理）: {structDecl.Identifier.Text} at line {lineNumber}");
+                    break;
+                }
+            case RecordDeclarationSyntax recordDecl:
+                {
+                    var lineNumber = recordDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                    Console.WriteLine($"[警告] 记录类型声明被忽略: {recordDecl.Identifier.Text} at line {lineNumber}");
+                    break;
+                }
+            case DelegateDeclarationSyntax del:
+                {
+                    var lineNumber = del.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                    Console.WriteLine($"[警告] 委托声明被忽略: {del.Identifier.Text} at line {lineNumber}");
+                    break;
+                }
+        }
     }
 
     public override void VisitClassDeclaration(ClassDeclarationSyntax node)
@@ -103,6 +148,58 @@ internal partial class TfwrSyntaxWalker(
                 Visit(method);
             else if (member is ClassDeclarationSyntax nested)
                 Visit(nested);
+        }
+
+        // 对被忽略的类成员输出警告
+        foreach (var member in node.Members)
+        {
+            switch (member)
+            {
+                case FieldDeclarationSyntax:
+                case MethodDeclarationSyntax:
+                case ConstructorDeclarationSyntax:
+                case ClassDeclarationSyntax:
+                    // 已处理
+                    break;
+                case PropertyDeclarationSyntax prop:
+                    var lineNumber = prop.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                    Console.WriteLine($"[警告] 属性声明被忽略: {prop.Identifier.Text} at line {lineNumber}（仅支持字段，不支持 get/set 逻辑）");
+                    break;
+                case EventDeclarationSyntax evt:
+                    WarnIgnoredMember(evt, $"事件声明: {evt.Identifier.Text}");
+                    break;
+                case EventFieldDeclarationSyntax evtField:
+                    WarnIgnoredMember(evtField, "事件字段声明");
+                    break;
+                case IndexerDeclarationSyntax indexer:
+                    WarnIgnoredMember(indexer, "索引器声明");
+                    break;
+                case OperatorDeclarationSyntax op:
+                    WarnIgnoredMember(op, $"运算符重载: {op.OperatorToken.Text}");
+                    break;
+                case ConversionOperatorDeclarationSyntax conv:
+                    WarnIgnoredMember(conv, "类型转换运算符");
+                    break;
+                case DelegateDeclarationSyntax del:
+                    WarnIgnoredMember(del, $"委托声明: {del.Identifier.Text}");
+                    break;
+                case DestructorDeclarationSyntax:
+                    WarnIgnoredMember(member, "析构函数");
+                    break;
+                case EnumDeclarationSyntax enumDecl:
+                    WarnIgnoredMember(enumDecl, $"枚举声明: {enumDecl.Identifier.Text}");
+                    break;
+                case InterfaceDeclarationSyntax iface:
+                    WarnIgnoredMember(iface, $"接口声明: {iface.Identifier.Text}");
+                    break;
+                case StructDeclarationSyntax structDecl:
+                    WarnIgnoredMember(structDecl, $"结构体声明: {structDecl.Identifier.Text}");
+                    break;
+                case RecordDeclarationSyntax recordDecl:
+                    WarnIgnoredMember(recordDecl, $"记录类型声明: {recordDecl.Identifier.Text}");
+                    break;
+                    // 其他未知成员不需要额外警告
+            }
         }
     }
 
@@ -379,5 +476,11 @@ internal partial class TfwrSyntaxWalker(
                     or PrefixUnaryExpressionSyntax { OperatorToken.Text: "++" or "--" }
                     or AssignmentExpressionSyntax
                     or InvocationExpressionSyntax;
+    }
+
+    private static void WarnIgnoredMember(MemberDeclarationSyntax member, string description)
+    {
+        var lineNumber = member.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        Console.WriteLine($"[警告] 已忽略的类成员: {description} at line {lineNumber}");
     }
 }
